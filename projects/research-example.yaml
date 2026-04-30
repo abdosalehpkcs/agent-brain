@@ -1,0 +1,11 @@
+id: research-ai-memory
+name: AI Memory Research
+type: research
+root_path: /absolute/path/to/research/project
+include:
+  - "**/*.md"
+  - "**/*.txt"
+  - "**/*.pdf"
+exclude:
+  - ".git/**"
+  - ".venv/**"

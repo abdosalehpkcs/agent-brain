@@ -1,0 +1,9 @@
+psycopg
+psycopg-binary
+pyyaml
+python-dotenv
+openai
+tiktoken
+pypdf
+mcp
+pytest

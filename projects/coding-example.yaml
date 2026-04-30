@@ -1,0 +1,17 @@
+id: coding-platform-api
+name: Platform API
+type: coding
+root_path: /absolute/path/to/code/project
+include:
+  - "**/*.py"
+  - "**/*.ts"
+  - "**/*.js"
+  - "**/*.md"
+  - "**/*.yaml"
+  - "**/*.sql"
+exclude:
+  - ".git/**"
+  - "node_modules/**"
+  - "dist/**"
+  - "build/**"
+  - ".venv/**"

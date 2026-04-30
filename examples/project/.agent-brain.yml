@@ -1,0 +1,20 @@
+# agent-brain project identity file
+#
+# Place this file at the root of any project repository that uses agent-brain
+# as its memory backend.
+#
+# The global agent-brain MCP server reads this file to resolve which project's
+# memory to query when a request arrives from a repo that hasn't explicitly
+# passed a project_id argument.
+#
+# INSTRUCTIONS:
+# 1. Copy this file to the root of your project repo.
+# 2. Set project_id to the unique identifier you registered in agent-brain.
+# 3. Commit the file so all team members share the same context identity.
+
+project_id: opseone-adt
+
+# Optional metadata (not required for MCP routing, but useful for docs)
+name: OpsOne ADT API
+description: Alert Configuration API for OpsOne ADT project
+type: coding

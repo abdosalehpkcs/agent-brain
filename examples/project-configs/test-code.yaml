@@ -1,0 +1,10 @@
+id: test-code
+name: Test Code Project
+type: coding
+root_path: ../projects/test-code-project
+include:
+  - "**/*.py"
+  - "**/*.md"
+exclude:
+  - ".git/**"
+  - ".venv/**"

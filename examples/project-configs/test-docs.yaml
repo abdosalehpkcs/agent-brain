@@ -1,0 +1,9 @@
+id: test-docs
+name: Test Docs Project
+type: research
+root_path: ../projects/test-docs-project
+include:
+  - "**/*.md"
+exclude:
+  - ".git/**"
+  - ".venv/**"

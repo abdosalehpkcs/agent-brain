@@ -1,0 +1,77 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: agent-brain-postgres
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-agent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agentpass}
+      POSTGRES_DB: ${POSTGRES_DB:-agent_memory}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - agent-brain-postgres-data:/var/lib/postgresql/data
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    networks:
+      - agent-brain-network
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: agent-brain-ollama
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    ports:
+      - "11434:11434"
+    volumes:
+      - agent-brain-ollama-data:/root/.ollama
+    networks:
+      - agent-brain-network
+
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: agent-brain-ollama-init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -eu
+        echo "Waiting for Ollama API..."
+        until ollama list >/dev/null 2>&1; do
+          sleep 2
+        done
+
+        echo "Pulling qwen2.5-coder (coding model)"
+        ollama pull qwen2.5-coder
+
+        echo "Pulling llama3.1 (research/reasoning model)"
+        ollama pull llama3.1
+
+        echo "Pulling nomic-embed-text (embedding model)"
+        ollama pull nomic-embed-text
+
+        echo "Model bootstrap complete."
+    restart: "no"
+    volumes:
+      - agent-brain-ollama-data:/root/.ollama
+    networks:
+      - agent-brain-network
+
+volumes:
+  agent-brain-postgres-data:
+  agent-brain-ollama-data:
+
+networks:
+  agent-brain-network:
+    name: agent-brain-network

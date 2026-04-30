@@ -1,0 +1,13 @@
+{
+  "servers": {
+    "agent-brain": {
+      "type": "stdio",
+      "command": "/ABSOLUTE/PATH/TO/agent-brain/.venv/bin/python",
+      "args": ["-m", "app.mcp_server"],
+      "cwd": "/ABSOLUTE/PATH/TO/agent-brain",
+      "env": {
+        "PYTHONPATH": "/ABSOLUTE/PATH/TO/agent-brain"
+      }
+    }
+  }
+}
