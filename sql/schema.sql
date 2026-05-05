@@ -101,10 +101,10 @@ CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_1536_embedding
     ON chunk_embeddings_1536 USING ivfflat (embedding vector_cosine_ops)
     WITH (lists = 100);
 
--- chunk_embeddings_3072 stores full-size embeddings for 3072-dimension models
--- (for example, text-embedding-3-large).
+-- chunk_embeddings_3072 stores embeddings for 3072-dimension models (experimental).
 -- pgvector ANN indexes (ivfflat/hnsw) on the vector type support up to 2000 dimensions,
--- so this table keeps exact-search semantics with provider/model filtering.
+-- so this table uses exact-search semantics with provider/model filtering.
+-- Prefer 768 or 1536 for production workloads.
 CREATE TABLE IF NOT EXISTS chunk_embeddings_3072 (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     chunk_id UUID NOT NULL REFERENCES chunks(id) ON DELETE CASCADE,

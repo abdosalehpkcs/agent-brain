@@ -6,32 +6,30 @@ coexist without destructive schema changes.
 
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from psycopg import Connection
+from psycopg import Connection, connect
 from psycopg.rows import dict_row
 from psycopg.sql import Identifier, SQL
 
+from app.config import ALL_KNOWN_DIMENSIONS, DATABASE_URL, SUPPORTED_DIMENSIONS
 from app.errors import VectorStoreError
 
-ANN_INDEXED_DIMENSIONS: frozenset[int] = frozenset({768, 1536})
+ANN_INDEXED_DIMENSIONS: frozenset[int] = SUPPORTED_DIMENSIONS
 
 
 def get_embedding_table(dimensions: int) -> str:
-    table_map = {
-        768: "chunk_embeddings_768",
-        1536: "chunk_embeddings_1536",
-        3072: "chunk_embeddings_3072",
-    }
+    table_map = {d: f"chunk_embeddings_{d}" for d in sorted(ALL_KNOWN_DIMENSIONS)}
 
     try:
         return table_map[dimensions]
     except KeyError as exc:
         raise VectorStoreError(
             f"Unsupported embedding dimensions: {dimensions}. "
-            "Supported values are 768, 1536, and 3072."
+            f"Supported: {', '.join(str(d) for d in sorted(SUPPORTED_DIMENSIONS))}."
         ) from exc
 
 
@@ -159,3 +157,123 @@ def search_embeddings(
         )
         for row in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Embedding status helpers
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class EmbeddingStatus:
+    """Summary row returned by get_embedding_status."""
+
+    project_id: str
+    provider: str
+    model: str
+    dimensions: int
+    indexed: bool
+    chunk_count: int
+    embedding_count: int
+    missing_count: int
+
+
+def get_embedding_status(
+    conn: Connection,
+    *,
+    project_id: str,
+) -> list[EmbeddingStatus]:
+    """Return per-provider/model embedding coverage for *project_id*.
+
+    Queries each dimension-specific table and compares the embedding count
+    against the total chunk count for the project.
+    """
+    if not project_id.strip():
+        raise VectorStoreError("project_id cannot be empty")
+
+    # Total chunks for this project.
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT COUNT(*) AS cnt FROM chunks WHERE project_id = %s",
+            (project_id,),
+        )
+        total_chunks: int = (cur.fetchone() or {"cnt": 0})["cnt"]
+
+    results: list[EmbeddingStatus] = []
+
+    for dim in sorted(ALL_KNOWN_DIMENSIONS):
+        table = get_embedding_table(dim)
+        query = SQL(
+            """
+            SELECT provider, model, COUNT(*) AS cnt
+            FROM {table}
+            WHERE project_id = %s
+            GROUP BY provider, model
+            ORDER BY provider, model
+            """
+        ).format(table=Identifier(table))
+
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(query, (project_id,))
+            rows = cur.fetchall()
+
+        for row in rows:
+            emb_count = row["cnt"]
+            results.append(
+                EmbeddingStatus(
+                    project_id=project_id,
+                    provider=row["provider"],
+                    model=row["model"],
+                    dimensions=dim,
+                    indexed=dim in ANN_INDEXED_DIMENSIONS,
+                    chunk_count=total_chunks,
+                    embedding_count=emb_count,
+                    missing_count=max(0, total_chunks - emb_count),
+                )
+            )
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="python -m app.vector_store",
+        description="Vector store utilities",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    status_parser = sub.add_parser("status", help="Show embedding status for a project")
+    status_parser.add_argument("--project-id", required=True, help="Project identifier")
+
+    return parser
+
+
+def main() -> None:
+    args = _build_parser().parse_args()
+
+    if args.command == "status":
+        with connect(DATABASE_URL) as conn:
+            rows = get_embedding_status(conn, project_id=args.project_id)
+
+        if not rows:
+            print(f"No embeddings found for project '{args.project_id}'")
+            return
+
+        header = f"{'provider':<16} {'model':<28} {'dim':>5} {'indexed':<8} {'embeddings':>10} {'chunks':>8} {'missing':>8}"
+        print(header)
+        print("-" * len(header))
+        for r in rows:
+            indexed_label = "ANN" if r.indexed else "exact"
+            print(
+                f"{r.provider:<16} {r.model:<28} {r.dimensions:>5} {indexed_label:<8} "
+                f"{r.embedding_count:>10} {r.chunk_count:>8} {r.missing_count:>8}"
+            )
+
+
+if __name__ == "__main__":
+    main()

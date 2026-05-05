@@ -57,3 +57,13 @@ def test_custom_dimensions_load(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert config.EMBEDDING_PROVIDER == "openai"
     assert config.EMBEDDING_DIMENSIONS == 1536
+
+
+def test_experimental_dimensions_warns(monkeypatch: pytest.MonkeyPatch) -> None:
+    import warnings
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        config = _reload_config(monkeypatch, {"EMBEDDING_DIMENSIONS": "3072"})
+    assert config.EMBEDDING_DIMENSIONS == 3072
+    assert any("experimental" in str(w.message).lower() for w in caught)

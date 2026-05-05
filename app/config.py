@@ -7,6 +7,17 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
+# Dimensions that have ivfflat ANN indexes and are fully supported.
+SUPPORTED_DIMENSIONS: frozenset[int] = frozenset({768, 1536})
+
+# 3072 is stored but uses exact scan — treat as experimental.
+EXPERIMENTAL_DIMENSIONS: frozenset[int] = frozenset({3072})
+
+# Union of both for table lookup.
+ALL_KNOWN_DIMENSIONS: frozenset[int] = SUPPORTED_DIMENSIONS | EXPERIMENTAL_DIMENSIONS
+
+SUPPORTED_PROVIDERS: frozenset[str] = frozenset({"ollama", "openai", "azure"})
+
 
 load_dotenv()
 
@@ -67,19 +78,26 @@ class Settings:
 
 def load_settings() -> Settings:
     provider = _get_env("EMBEDDING_PROVIDER", "ollama").lower()
-    supported_providers = {"ollama", "openai", "azure"}
-    if provider not in supported_providers:
+    if provider not in SUPPORTED_PROVIDERS:
         raise ValueError(
             f"Unsupported EMBEDDING_PROVIDER '{provider}'. "
-            f"Expected one of: {', '.join(sorted(supported_providers))}"
+            f"Expected one of: {', '.join(sorted(SUPPORTED_PROVIDERS))}"
         )
 
     dimensions = _get_int_env_with_default("EMBEDDING_DIMENSIONS", 768)
-    supported_dimensions = {768, 1536, 3072}
-    if dimensions not in supported_dimensions:
+    if dimensions not in ALL_KNOWN_DIMENSIONS:
         raise ValueError(
             f"Unsupported EMBEDDING_DIMENSIONS {dimensions}. "
-            f"Expected one of: {', '.join(str(d) for d in sorted(supported_dimensions))}"
+            f"Supported: {', '.join(str(d) for d in sorted(SUPPORTED_DIMENSIONS))}. "
+            f"Experimental: {', '.join(str(d) for d in sorted(EXPERIMENTAL_DIMENSIONS))}."
+        )
+
+    if dimensions in EXPERIMENTAL_DIMENSIONS:
+        import warnings
+        warnings.warn(
+            f"EMBEDDING_DIMENSIONS={dimensions} is experimental. "
+            "No ANN index is available; searches use exact scan.",
+            stacklevel=2,
         )
 
     return Settings(

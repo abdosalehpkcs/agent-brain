@@ -19,9 +19,11 @@ from app.config import (
     EMBEDDING_MODEL,
     EMBEDDING_PROVIDER,
     OLLAMA_BASE_URL,
+    SUPPORTED_DIMENSIONS,
 )
 from app.decisions import add_decision, list_project_decisions
 from app.search import search_project_memory
+from app.vector_store import get_embedding_status
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -210,8 +212,37 @@ def build_server() -> Any:
             "provider": EMBEDDING_PROVIDER,
             "embedding_model": EMBEDDING_MODEL,
             "embedding_dimensions": EMBEDDING_DIMENSIONS,
+            "supported_dimensions": sorted(SUPPORTED_DIMENSIONS),
             "ollama_reachable": _ollama_reachable(),
             "app_version": _get_app_version(),
+        }
+
+    @mcp.tool()
+    def embedding_status(project_id: str) -> dict[str, Any]:
+        """Return embedding coverage per provider/model for a project."""
+        if not project_id.strip():
+            raise ValueError("project_id is required")
+
+        try:
+            with connect(DATABASE_URL) as conn:
+                rows = get_embedding_status(conn, project_id=project_id)
+        except Exception as exc:
+            raise RuntimeError(f"embedding_status failed: {exc}") from None
+
+        return {
+            "project_id": project_id,
+            "entries": [
+                {
+                    "provider": r.provider,
+                    "model": r.model,
+                    "dimensions": r.dimensions,
+                    "indexed": r.indexed,
+                    "embedding_count": r.embedding_count,
+                    "chunk_count": r.chunk_count,
+                    "missing_count": r.missing_count,
+                }
+                for r in rows
+            ],
         }
 
     @mcp.tool()

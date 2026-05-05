@@ -3,7 +3,13 @@ from __future__ import annotations
 import pytest
 
 from app.errors import VectorStoreError
-from app.vector_store import get_embedding_table, is_ann_indexed_dimension, search_embeddings, upsert_embedding
+from app.vector_store import (
+    EmbeddingStatus,
+    get_embedding_table,
+    is_ann_indexed_dimension,
+    search_embeddings,
+    upsert_embedding,
+)
 
 
 def test_get_embedding_table_supported() -> None:
@@ -48,3 +54,25 @@ def test_upsert_embedding_empty_vector_raises() -> None:
             model="m",
             embedding=[],
         )
+
+
+def test_embedding_status_dataclass() -> None:
+    status = EmbeddingStatus(
+        project_id="p",
+        provider="ollama",
+        model="nomic-embed-text",
+        dimensions=768,
+        indexed=True,
+        chunk_count=10,
+        embedding_count=8,
+        missing_count=2,
+    )
+    assert status.indexed is True
+    assert status.missing_count == 2
+
+
+def test_get_embedding_status_empty_project_raises() -> None:
+    with pytest.raises(VectorStoreError):
+        from app.vector_store import get_embedding_status
+
+        get_embedding_status(None, project_id="  ")  # type: ignore[arg-type]
