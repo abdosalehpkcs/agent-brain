@@ -45,3 +45,19 @@ class ProjectResolutionError(AgentBrainError):
 
 class MCPServerError(AgentBrainError):
     """Raised when the MCP server encounters a startup or tool error."""
+
+
+class PolicyError(AgentBrainError):
+    """Raised when write policy validation fails or policy file is invalid."""
+
+
+class AuditError(AgentBrainError):
+    """Raised when audit logging fails."""
+
+
+class ForgetError(AgentBrainError):
+    """Raised when a memory deletion operation fails or is blocked."""
+
+
+class PDFIngestionError(AgentBrainError):
+    """Raised when PDF extraction or ingestion fails."""

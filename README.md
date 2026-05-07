@@ -1,55 +1,345 @@
 # agent-brain
 
-agent-brain is a local-first memory backend for coding and research assistants. It stores project content in PostgreSQL + pgvector, generates embeddings through multiple providers, and serves memory/search through CLI modules and MCP tools.
+agent-brain is a project-scoped memory backend for coding and research assistants. It stores content in PostgreSQL + pgvector, generates embeddings through configurable providers, enforces write policies, maintains audit logs, and serves memory/search through CLI modules and MCP tools.
 
-## Architecture Summary
+## Architecture Overview
 
-- Storage: PostgreSQL 16 with pgvector.
-- Embeddings: provider-agnostic router for Ollama, OpenAI, and Azure OpenAI.
-- Isolation: project-level partitioning plus provider/model-scoped retrieval.
-- Retrieval: semantic search over dimension-specific embedding tables.
-- MCP: optional shared server exposing memory tools to Copilot.
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      MCP Server                             │
+│  search_project_context, save_project_decision,            │
+│  forget_memory, ingest_pdf_document, ...                   │
+└─────────────────────────────────────────────────────────────┘
+         │                │                │
+         ▼                ▼                ▼
+┌─────────────┐  ┌─────────────┐  ┌─────────────┐
+│   Policy    │  │    Audit    │  │  Embedding  │
+│  Validator  │  │   Logger    │  │  Provider   │
+└─────────────┘  └─────────────┘  └─────────────┘
+         │                │                │
+         └────────────────┼────────────────┘
+                          ▼
+              ┌─────────────────────┐
+              │  PostgreSQL + pgvector  │
+              │  (project-scoped data)  │
+              └─────────────────────┘
+```
 
-## Current Features
+### Core Components
 
-- Project indexing from YAML config files.
-- Semantic search scoped by project, provider, model, and vector dimensions.
-- Durable decision memory with CLI CRUD-style operations.
-- Content-hash deduplication: unchanged documents are skipped on re-index.
-- Provider switching: index the same project under multiple providers without data loss.
-- Embedding status CLI: inspect coverage per provider/model/dimension.
-- MCP server tools:
-  - search_project_context
-  - get_project_decisions
-  - save_project_decision
-  - embedding_status
-  - system_status
-  - list_projects
-- Docker Compose stack for PostgreSQL + Ollama + model bootstrap.
+- **Storage**: PostgreSQL 16 with pgvector extension
+- **Embeddings**: Provider-agnostic router for Ollama, OpenAI, and Azure OpenAI
+- **Isolation**: Project-level partitioning with provider/model-scoped retrieval
+- **Write Policy**: YAML-based rules controlling what memories can be stored
+- **Audit Logging**: JSON-lines audit trail for all memory operations
+- **MCP Server**: Tools for Copilot and other MCP-compatible agents
 
-## Provider Support
+## Privacy Implications
 
-Supported embedding providers:
+**Important**: Data privacy depends on your configured embedding provider:
 
-- ollama (default)
-- openai
-- azure
+| Provider | Data Location | Privacy Level |
+|----------|---------------|---------------|
+| Ollama | Local machine | Fully local - no external API calls |
+| OpenAI | OpenAI servers | Cloud - text sent to OpenAI API |
+| Azure OpenAI | Azure infrastructure | Cloud - check your Azure data residency |
 
-Provider selection is controlled by environment variables in `.env`.
+**Local-only mode is possible ONLY when using Ollama.** When OpenAI or Azure providers are configured, your text content is sent to external APIs for embedding generation.
 
-Each provider produces embeddings with a specific model and dimension. Embeddings are stored per (provider, model, dimension) — they never mix. Switching providers adds new embeddings alongside existing ones.
+## MCP Tools
 
-### Default Configuration
+| Tool | Purpose |
+|------|---------|
+| `search_project_context` | Semantic search over project memory |
+| `get_project_decisions` | Retrieve active/recent decisions |
+| `save_project_decision` | Store a decision with policy validation |
+| `forget_memory` | Safe deletion with dry-run support |
+| `ingest_pdf_document` | PDF extraction and ingestion |
+| `embedding_status` | Check embedding coverage |
+| `system_status` | Runtime health and configuration |
+| `list_projects` | List all known projects |
+
+## Write Policy
+
+The write policy (`brain-write-policy.yml`) controls what memories can be stored:
+
+```yaml
+default_allowed: false
+require_category: true
+
+categories:
+  confirmed_decisions:
+    allowed: true
+    requires_source: true
+    requires_context: false
+    allow_overwrite: false
+    description: "Final architecture decisions"
+
+  temporary_notes:
+    allowed: true
+    requires_expiry: true
+    description: "Short-lived notes"
+```
+
+### Policy Rules
+
+| Rule | Effect |
+|------|--------|
+| `allowed: false` | Category is blocked entirely |
+| `requires_source: true` | Write must specify a source |
+| `requires_context: true` | Write must include context |
+| `allow_overwrite: false` | Cannot overwrite existing memories |
+| `requires_expiry: true` | Must specify an expiry date |
+
+### Example: Allowed Write
+
+```json
+{
+  "tool": "save_project_decision",
+  "arguments": {
+    "project_id": "my-project",
+    "title": "Use PostgreSQL",
+    "decision": "We will use PostgreSQL for storage",
+    "source": "architecture_review",
+    "category": "confirmed_decisions"
+  }
+}
+```
+
+### Example: Blocked Write
+
+```json
+{
+  "tool": "save_project_decision",
+  "arguments": {
+    "project_id": "my-project",
+    "title": "Quick note",
+    "decision": "...",
+    "category": "confirmed_decisions"
+    // Missing required "source" field
+  }
+}
+// Error: "Write blocked by policy: Category 'confirmed_decisions' requires a source"
+```
+
+## Audit Logging
+
+All memory-changing operations are logged to `agent-brain-audit.jsonl`:
+
+```json
+{
+  "timestamp": "2025-05-05T10:30:00Z",
+  "operation": "decision_save",
+  "project_id": "my-project",
+  "status": "success",
+  "category": "confirmed_decisions",
+  "source": "mcp",
+  "content_hash": "sha256...",
+  "embedding_provider": "ollama",
+  "embedding_model": "nomic-embed-text"
+}
+```
+
+**Sensitive content is NOT stored** in audit logs — only content hashes.
+
+### Audited Operations
+
+- Memory writes
+- Decision saves
+- Memory deletions
+- PDF ingestions
+- Policy-blocked attempts
+- Embedding generation failures
+
+### Inspecting Audit Logs
+
+```bash
+# View recent audit events
+tail -20 agent-brain-audit.jsonl | jq .
+
+# Filter by operation
+grep "decision_save" agent-brain-audit.jsonl | jq .
+
+# Find blocked writes
+grep "policy_blocked" agent-brain-audit.jsonl | jq .
+```
+
+## PDF Ingestion
+
+### How to Ingest a PDF
+
+```bash
+# CLI
+python -m app.pdf_ingestion /path/to/document.pdf my-project
+
+# MCP Tool
+{
+  "tool": "ingest_pdf_document",
+  "arguments": {
+    "project_id": "my-project",
+    "file_path": "/path/to/document.pdf"
+  }
+}
+```
+
+### Ingestion Behavior
+
+1. Extracts text from PDF pages
+2. Checks write policy for `pdf_content` category
+3. Computes content hash for duplicate detection
+4. Chunks text with page reference preservation
+5. Generates embeddings for each chunk
+6. Stores chunks with metadata
+7. Logs operation to audit trail
+
+### Page Reference Preservation
+
+Search results include page numbers:
+
+```json
+{
+  "chunk": {
+    "content": "Authentication must use OAuth 2.0...",
+    "metadata": {
+      "source_type": "pdf",
+      "start_page": 5,
+      "end_page": 6
+    }
+  }
+}
+```
+
+## Safe Forget/Delete
+
+### Delete by ID
+
+```json
+{
+  "tool": "forget_memory",
+  "arguments": {
+    "project_id": "my-project",
+    "chunk_id": "uuid-of-chunk"
+  }
+}
+```
+
+### Query-Based Deletion (Dry Run First)
+
+```json
+// Step 1: Preview what will be deleted
+{
+  "tool": "forget_memory",
+  "arguments": {
+    "project_id": "my-project",
+    "category": "temporary_notes",
+    "dry_run": true
+  }
+}
+// Returns: {"count": 5, "dry_run": true, "items": [...]}
+
+// Step 2: Actually delete
+{
+  "tool": "forget_memory",
+  "arguments": {
+    "project_id": "my-project",
+    "category": "temporary_notes",
+    "dry_run": false
+  }
+}
+```
+
+### Safety Constraints
+
+- Query-based deletion requires at least one filter (category or file_path_pattern)
+- Defaults to `dry_run: true` to prevent accidental deletion
+- All deletions are audit logged
+- Cross-project deletion is blocked
+
+## Quick Start
+
+### Automated Setup (Recommended)
+
+```bash
+./setup.sh
+```
+
+The setup script will:
+- Check prerequisites (Python, Docker)
+- Validate environment configuration
+- Create virtualenv and install dependencies
+- Start Docker services
+- Apply database schema
+- Run tests
+- Verify the full setup
+
+Options:
+```bash
+./setup.sh --help       # Show help
+./setup.sh --clean      # Clean previous setup first
+./setup.sh --test-only  # Run tests only
+./setup.sh --skip-docker # Skip Docker (use external DB)
+```
+
+### Manual Setup
+
+#### 1. Setup Environment
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+#### 2. Configure Provider
+
+Copy `.env.example` to `.env` and configure:
 
 ```env
+# Local mode (Ollama)
 EMBEDDING_PROVIDER=ollama
 EMBEDDING_MODEL=nomic-embed-text
 EMBEDDING_DIMENSIONS=768
+OLLAMA_BASE_URL=http://localhost:11434
+
+# Or OpenAI mode
+# EMBEDDING_PROVIDER=openai
+# EMBEDDING_MODEL=text-embedding-3-small
+# EMBEDDING_DIMENSIONS=1536
+# OPENAI_API_KEY=sk-...
+
+# Or Azure OpenAI mode
+# EMBEDDING_PROVIDER=azure
+# AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com
+# AZURE_OPENAI_API_KEY=...
+# AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
 ```
 
-## Vector Dimension Rules
+#### 3. Start Infrastructure
 
-Supported dimensions:
+```bash
+docker compose up -d
+```
+
+#### 4. Index and Search
+
+```bash
+# Index a project
+python -m app.indexer examples/project-configs/test-docs.yaml
+
+# Search
+python -m app.search test-docs "Why use pgvector?"
+
+# Ingest a PDF
+python -m app.pdf_ingestion /path/to/doc.pdf my-project
+```
+
+#### 5. Run MCP Server
+
+```bash
+python -m app.mcp_server
+```
+
+## Vector Dimensions
 
 | Dimension | Status | Index Type | Example Model |
 |-----------|--------|------------|---------------|
@@ -57,147 +347,82 @@ Supported dimensions:
 | 1536 | Supported | ivfflat ANN | text-embedding-3-small (OpenAI/Azure) |
 | 3072 | Experimental | Exact scan | text-embedding-3-large (OpenAI/Azure) |
 
-- 768 and 1536 have ivfflat ANN indexes for fast approximate search.
-- 3072 is stored in `VECTOR(3072)` and searched with exact scan (pgvector ANN indexes support up to 2000 dimensions for the `vector` type).
-- 3072 works but is flagged as experimental. A warning is emitted at startup.
-
-**Do not mix vectors from different providers/models in the same retrieval path.**
-
 ## Provider Switching
 
-Switching providers does not destroy existing embeddings. The workflow:
-
-1. Update `.env` with the new provider, model, and dimensions.
-2. Re-run the indexer for each project.
-3. Only missing embeddings for the new provider/model are created.
-4. Old embeddings remain in their dimension-specific tables.
+Switching providers does not destroy existing embeddings:
 
 ```bash
-# Switch to OpenAI
-EMBEDDING_PROVIDER=openai
-EMBEDDING_MODEL=text-embedding-3-small
-EMBEDDING_DIMENSIONS=1536
-
-# Re-index — skips unchanged content, creates only missing embeddings
+# 1. Update .env with new provider
+# 2. Re-index projects (only new embeddings created)
 python -m app.indexer examples/project-configs/test-docs.yaml
-```
 
-### Check Embedding Status
-
-```bash
+# 3. Check status
 python -m app.vector_store status --project-id test-docs
 ```
 
-Output shows provider, model, dimension, index type, and coverage:
+## Troubleshooting
 
-```
-provider         model                          dim indexed  embeddings   chunks  missing
---------------------------------------------------------------------------------
-ollama           nomic-embed-text               768 ANN              42       42        0
-openai           text-embedding-3-small        1536 ANN              42       42        0
-```
-
-## Re-indexing Behavior
-
-The indexer uses content-hash deduplication:
-
-- Each document is hashed (SHA-256) on read.
-- If the hash matches the stored hash, the document is skipped.
-- If content changed, old chunks and embeddings are deleted, then re-created.
-- On provider switch, unchanged documents still get new embeddings for the active provider/model.
-- Chunks are never duplicated; the `(document_id, chunk_index)` constraint prevents it.
-
-## Embedding Metadata
-
-Every embedding row includes:
-
-- `provider` — which API produced the vector (ollama, openai, azure)
-- `model` — the specific model name
-- `dimensions` — inferred from the table (768, 1536, or 3072)
-- `created_at` — timestamp
-
-Search always filters by `(project_id, provider, model)` to prevent cross-model contamination.
-
-## Docker Setup
-
-### Service and resource names
-
-- Services: postgres, ollama, ollama-init
-- Containers:
-  - agent-brain-postgres
-  - agent-brain-ollama
-  - agent-brain-ollama-init
-- Volumes:
-  - agent-brain-postgres-data
-  - agent-brain-ollama-data
-- Network:
-  - agent-brain-network
-
-## Quick Start
-
-1. Create a Python virtual environment and install dependencies.
-2. Copy `.env.example` to `.env` and set provider settings.
-3. Start infrastructure:
+### Database Connection Issues
 
 ```bash
-docker compose up -d
+# Check PostgreSQL is running
+docker compose ps
+
+# Test connection
+psql $DATABASE_URL -c "SELECT 1"
 ```
 
-4. Index and search sample projects:
+### Ollama Connection Issues
 
 ```bash
-python -m app.indexer examples/project-configs/test-docs.yaml
-python -m app.search test-docs "Why use pgvector?"
+# Check Ollama is running
+curl http://localhost:11434/api/tags
 
-python -m app.indexer examples/project-configs/test-code.yaml
-python -m app.search test-code "Where is JWT token logic implemented?"
+# Pull the model
+ollama pull nomic-embed-text
 ```
 
-5. Check embedding status:
+### Policy Errors
 
 ```bash
-python -m app.vector_store status --project-id test-docs
+# Check write policy file exists
+cat brain-write-policy.yml
+
+# Verify YAML syntax
+python -c "import yaml; yaml.safe_load(open('brain-write-policy.yml'))"
 ```
 
-6. Decision memory check:
+### Audit Log Issues
 
 ```bash
-python -m app.decisions list --project-id test-code
+# Check audit log exists and is writable
+touch agent-brain-audit.jsonl
+ls -la agent-brain-audit.jsonl
+
+# View recent entries
+tail agent-brain-audit.jsonl | jq .
 ```
-
-## MCP Setup
-
-Use the global setup guide:
-
-- docs/global-mcp-setup.md
-
-Related docs:
-
-- docs/diagram.md
-- docs/project-resolution.md
-- docs/testing-guide.md
-- docs/troubleshooting.md
-- docs/security.md
 
 ## Testing
-
-Run the test suite:
 
 ```bash
 pytest
 ```
 
-## Validation Commands
+## Documentation
 
-```bash
-docker compose config
-docker compose up -d
-docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
+- [Global MCP Setup](docs/global-mcp-setup.md)
+- [Project Resolution](docs/project-resolution.md)
+- [Testing Guide](docs/testing-guide.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Security](docs/security.md)
 
-python -m app.indexer examples/project-configs/test-docs.yaml
-python -m app.search test-docs "Why use pgvector?"
+## Skills
 
-python -m app.indexer examples/project-configs/test-code.yaml
+Agent skills are documented in the `skills/` directory:
+
+- [PDF Ingestion](skills/pdf-ingestion/SKILL.md) - How to ingest PDFs
+- [Local Brain Access](skills/local-brain-access/SKILL.md) - How to use the MCP tools
 python -m app.search test-code "Where is JWT token logic implemented?"
 
 python -m app.vector_store status --project-id test-docs

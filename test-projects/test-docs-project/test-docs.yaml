@@ -1,7 +1,7 @@
 id: test-docs
 name: Test Docs Project
 type: research
-root_path: .
+root_path: /test-projects/test-docs-project
 include:
   - "**/*.md"
 exclude:

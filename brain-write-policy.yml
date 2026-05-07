@@ -1,0 +1,93 @@
+# Write Policy Configuration for agent-brain
+#
+# This file defines which memory categories are allowed, what metadata
+# is required, and how writes should be validated before storage.
+#
+# Categories not listed here are controlled by 'default_allowed'.
+# Set 'require_category: true' to force all writes to specify a category.
+
+# Global settings
+default_allowed: false
+require_category: true
+
+# Memory categories and their rules
+categories:
+  confirmed_decisions:
+    allowed: true
+    requires_source: true
+    requires_context: false
+    allow_overwrite: false
+    requires_expiry: false
+    description: "Final architecture or design decisions that have been agreed upon"
+
+  validated_findings:
+    allowed: true
+    requires_source: true
+    requires_context: true
+    allow_overwrite: true
+    requires_expiry: false
+    description: "Research findings that have been validated through testing or review"
+
+  architecture_notes:
+    allowed: true
+    requires_source: false
+    requires_context: true
+    allow_overwrite: true
+    requires_expiry: false
+    description: "Notes about system architecture, patterns, and design rationale"
+
+  action_items:
+    allowed: true
+    requires_source: false
+    requires_context: false
+    allow_overwrite: true
+    requires_expiry: true
+    description: "Tasks and action items that need to be completed"
+
+  agreed_next_steps:
+    allowed: true
+    requires_source: true
+    requires_context: false
+    allow_overwrite: true
+    requires_expiry: false
+    description: "Next steps that have been agreed upon in a discussion or meeting"
+
+  prompt_response_essence:
+    allowed: true
+    requires_source: true
+    requires_context: false
+    allow_overwrite: true
+    requires_expiry: false
+    description: "Key insights extracted from prompt-response exchanges"
+
+  rejected_ideas:
+    allowed: true
+    requires_source: true
+    requires_context: true
+    allow_overwrite: false
+    requires_expiry: false
+    description: "Ideas that were considered but rejected, with reasoning"
+
+  temporary_notes:
+    allowed: true
+    requires_source: false
+    requires_context: false
+    allow_overwrite: true
+    requires_expiry: true
+    description: "Short-lived notes that should be cleaned up after expiry"
+
+  pdf_content:
+    allowed: true
+    requires_source: true
+    requires_context: false
+    allow_overwrite: true
+    requires_expiry: false
+    description: "Content extracted from PDF documents"
+
+  code_documentation:
+    allowed: true
+    requires_source: true
+    requires_context: false
+    allow_overwrite: true
+    requires_expiry: false
+    description: "Documentation extracted from code files"

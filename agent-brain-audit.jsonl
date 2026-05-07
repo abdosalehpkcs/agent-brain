@@ -1,0 +1,6 @@
+{"timestamp": "2026-05-05T13:57:08.995996+00:00", "operation": "memory_delete", "project_id": "test-project", "status": "blocked", "reason": "Query-based deletion requires at least category or file_path_pattern", "metadata": {}}
+{"timestamp": "2026-05-05T13:57:08.996913+00:00", "operation": "memory_delete", "project_id": "test-project", "status": "blocked", "reason": "Query-based deletion requires at least category or file_path_pattern", "metadata": {}}
+{"timestamp": "2026-05-05T13:58:02.067304+00:00", "operation": "memory_delete", "project_id": "test-project", "status": "blocked", "reason": "Query-based deletion requires at least category or file_path_pattern", "metadata": {}}
+{"timestamp": "2026-05-05T13:58:02.070293+00:00", "operation": "memory_delete", "project_id": "test-project", "status": "blocked", "reason": "Query-based deletion requires at least category or file_path_pattern", "metadata": {}}
+{"timestamp": "2026-05-05T18:29:20.926734+00:00", "operation": "memory_delete", "project_id": "test-project", "status": "blocked", "reason": "Query-based deletion requires at least category or file_path_pattern", "metadata": {}}
+{"timestamp": "2026-05-05T18:29:20.928076+00:00", "operation": "memory_delete", "project_id": "test-project", "status": "blocked", "reason": "Query-based deletion requires at least category or file_path_pattern", "metadata": {}}

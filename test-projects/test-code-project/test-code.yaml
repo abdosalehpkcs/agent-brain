@@ -1,7 +1,7 @@
 id: test-code
 name: Test Code Project
 type: coding
-root_path: .
+root_path: /test-projects/test-docs-project
 include:
   - "src/**/*.py"
   - "README.md"

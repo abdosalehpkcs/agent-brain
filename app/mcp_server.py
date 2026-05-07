@@ -7,12 +7,15 @@ business logic. It intentionally avoids re-implementing indexing or retrieval.
 from __future__ import annotations
 
 from importlib import metadata
+from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import requests
 from psycopg import connect
 from psycopg.rows import dict_row
 
+from app.audit import AuditStatus, get_audit_logger
 from app.config import (
     DATABASE_URL,
     EMBEDDING_DIMENSIONS,
@@ -22,6 +25,14 @@ from app.config import (
     SUPPORTED_DIMENSIONS,
 )
 from app.decisions import add_decision, list_project_decisions
+from app.forget import (
+    forget_by_chunk_id,
+    forget_by_decision_id,
+    forget_by_query,
+    forget_document,
+)
+from app.pdf_ingestion import ingest_pdf
+from app.policy import WriteRequest, get_policy, validate_write
 from app.search import search_project_memory
 from app.vector_store import get_embedding_status
 
@@ -174,6 +185,7 @@ def build_server() -> Any:
         alternatives: str = "",
         status: str = "active",
         source: str = "mcp",
+        category: str = "confirmed_decisions",
     ) -> dict[str, Any]:
         """Persist a decision for long-term project memory."""
         if not project_id.strip():
@@ -182,6 +194,26 @@ def build_server() -> Any:
             raise ValueError("title is required")
         if not decision.strip():
             raise ValueError("decision is required")
+
+        audit = get_audit_logger()
+
+        # Validate write policy
+        policy = get_policy()
+        request = WriteRequest(
+            category=category,
+            source=source,
+            context=reason if reason else None,
+        )
+        validation = validate_write(request, policy)
+
+        if not validation.allowed:
+            audit.log_policy_blocked(
+                project_id=project_id,
+                category=category,
+                source=source,
+                reason=validation.reason,
+            )
+            raise ValueError(f"Write blocked by policy: {validation.reason}")
 
         try:
             with connect(DATABASE_URL) as conn:
@@ -196,7 +228,24 @@ def build_server() -> Any:
                     source=source,
                 )
                 conn.commit()
+
+                audit.log_decision_save(
+                    project_id=project_id,
+                    status=AuditStatus.SUCCESS,
+                    title=title,
+                    decision=decision,
+                    source=source,
+                    item_id=str(record.id),
+                )
         except Exception as exc:
+            audit.log_decision_save(
+                project_id=project_id,
+                status=AuditStatus.FAILED,
+                title=title,
+                decision=decision,
+                source=source,
+                reason=str(exc),
+            )
             raise RuntimeError(f"save_project_decision failed: {exc}") from None
 
         return {
@@ -274,6 +323,123 @@ def build_server() -> Any:
                 }
                 for row in rows
             ]
+        }
+
+    @mcp.tool()
+    def forget_memory(
+        project_id: str,
+        chunk_id: str | None = None,
+        decision_id: str | None = None,
+        document_id: str | None = None,
+        category: str | None = None,
+        file_path_pattern: str | None = None,
+        dry_run: bool = True,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """Safely delete memory items with audit logging.
+
+        Supports deletion by:
+        - chunk_id: Delete a single chunk
+        - decision_id: Delete a single decision
+        - document_id: Delete a document and all its chunks
+        - category + file_path_pattern: Query-based deletion (requires dry_run first)
+
+        For safety, query-based deletion defaults to dry_run=True.
+        """
+        if not project_id.strip():
+            raise ValueError("project_id is required")
+
+        # Must specify exactly one target type
+        targets = [chunk_id, decision_id, document_id, (category or file_path_pattern)]
+        specified = sum(1 for t in targets if t)
+
+        if specified == 0:
+            raise ValueError(
+                "Must specify one of: chunk_id, decision_id, document_id, "
+                "or category/file_path_pattern"
+            )
+
+        try:
+            with connect(DATABASE_URL) as conn:
+                if chunk_id:
+                    result = forget_by_chunk_id(
+                        conn,
+                        chunk_id=UUID(chunk_id),
+                        project_id=project_id,
+                    )
+                elif decision_id:
+                    result = forget_by_decision_id(
+                        conn,
+                        decision_id=UUID(decision_id),
+                        project_id=project_id,
+                    )
+                elif document_id:
+                    result = forget_document(
+                        conn,
+                        document_id=UUID(document_id),
+                        project_id=project_id,
+                    )
+                else:
+                    result = forget_by_query(
+                        conn,
+                        project_id=project_id,
+                        category=category,
+                        file_path_pattern=file_path_pattern,
+                        dry_run=dry_run,
+                        limit=limit,
+                    )
+        except Exception as exc:
+            raise RuntimeError(f"forget_memory failed: {exc}") from None
+
+        return {
+            "deleted": result.deleted,
+            "count": result.count,
+            "dry_run": result.dry_run,
+            "items": result.items,
+            "message": result.message,
+        }
+
+    @mcp.tool()
+    def ingest_pdf_document(
+        project_id: str,
+        file_path: str,
+        chunk_size: int = 1200,
+        chunk_overlap: int = 150,
+        skip_duplicates: bool = True,
+        category: str = "pdf_content",
+    ) -> dict[str, Any]:
+        """Ingest a PDF document into project memory.
+
+        Extracts text, chunks with page references, generates embeddings,
+        and stores in the project memory with full audit logging.
+        """
+        if not project_id.strip():
+            raise ValueError("project_id is required")
+        if not file_path.strip():
+            raise ValueError("file_path is required")
+
+        try:
+            with connect(DATABASE_URL) as conn:
+                result = ingest_pdf(
+                    conn,
+                    file_path=Path(file_path),
+                    project_id=project_id,
+                    source="mcp",
+                    chunk_size=chunk_size,
+                    chunk_overlap=chunk_overlap,
+                    skip_duplicates=skip_duplicates,
+                    category=category,
+                )
+        except Exception as exc:
+            raise RuntimeError(f"ingest_pdf failed: {exc}") from None
+
+        return {
+            "success": result.success,
+            "document_id": str(result.document_id) if result.document_id else None,
+            "chunk_count": result.chunk_count,
+            "pages_processed": result.pages_processed,
+            "skipped": result.skipped,
+            "message": result.message,
         }
 
     return mcp
